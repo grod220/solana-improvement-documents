@@ -1,0 +1,240 @@
+---
+simd: '0567'
+title: "p-ATA: CU-optimized ATA Program"
+authors:
+  - Gabe R. (Anza)
+  - Peter K. (Ergonia)
+category: Standard
+type: Core
+status: Review
+created: 2026-06-17
+feature: TBD
+---
+
+## Summary
+
+This proposal outlines a plan to replace the current Associated Token Account
+program (`ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`) with a Pinocchio-based,
+CU-optimized implementation (`p-ATA`) at the same program address.
+
+The replacement is a drop-in implementation for the existing `Create`,
+`CreateIdempotent`, and `RecoverNested` instructions with the same ABI. It also
+adds a new `CreateWithArgs` instruction for callers that can provide optional
+optimization hints.
+
+## Motivation
+
+ATA creation is one of the most frequently executed instructions on Solana. This
+program governs the standard that derives canonical token addresses and handles
+the CPIs to create the token accounts. This makes the ATA program a
+high-leverage target for compute reduction.
+
+On a 30k confirmed-block stratified mainnet sample:
+
+- ATA appears in 11.85% of transactions
+- ATA share of total CU usage: 13.28%
+- Top invoked programs (ranked):
+    1. spl token (p-token already live),
+    2. compute budget (Transaction V1 makes this ix unnecessary)
+    3. vote (removed in Alpenglow)
+    4. system (a runtime built-in)
+    5. ATA (the next best candidate to pinocchio-ize)
+
+[P-Token][SIMD-0266] was a strong validation of the pinocchio philosophy:
+zero-copy + no-std + no-alloc + low deps. The CU usage of the token program
+effectively collapsed (-93%) with the usage as active as before. No userflow
+changes, but simply meaningfully freed block capacity on the network. The same
+results can be had with the ATA program.
+
+## Impact
+
+The average CU reduction (weighted by instruction frequency) of `p-ATA`
+instructions is 80.9% against the legacy ATA program baseline. Given ATA's share
+of total CU usage, we can expect a cluster-wide CU reduction of ~10-11%.
+
+| Case                    | Share of use | Legacy | p-ATA | Reduction |
+|-------------------------|-------------:|-------:|------:|----------:|
+| idempotent new SPL      |       39.86% | 22,940 | 4,171 |    -81.8% |
+| idempotent existing SPL |       30.32% |  3,710 |   548 |    -85.2% |
+| idempotent existing T22 |       18.60% |  8,210 | 1,634 |    -80.1% |
+| create SPL              |        5.65% | 18,433 | 3,083 |    -83.3% |
+| idempotent new T22      |        3.65% | 15,474 | 5,496 |    -64.5% |
+| create T22              |        1.91% | 13,967 | 5,132 |    -63.3% |
+| recover_nested SPL/SPL  |        0.00% | 26,806 | 5,196 |    -80.6% |
+
+`CreateWithArgs` is a new proposed instruction where callers can cheaply provide
+the bump, account length, and rent sysvar. Ordered by observed use where
+available, it saves the following on creation and idempotent paths:
+
+| Case                    |  Base | WithArgs | Delta |
+|-------------------------|------:|---------:|------:|
+| idempotent new SPL      | 4,171 |    3,984 |  -187 |
+| idempotent existing SPL |   548 |      606 |   +58 |
+| idempotent existing T22 | 1,634 |    1,695 |   +61 |
+| create SPL              | 3,083 |    2,891 |  -192 |
+| idempotent new T22      | 5,496 |    5,303 |  -193 |
+| create T22              | 5,132 |    4,934 |  -198 |
+| create prefunded SPL    | 3,083 |    2,891 |  -192 |
+| create prefunded T22    | 5,132 |    4,934 |  -198 |
+| create T22 known mint   | 6,164 |    5,750 |  -414 |
+
+Note: idempotent paths still being optimized (at the moment, CUs higher against
+baseline).
+
+## New Terminology
+
+n/a
+
+## Detailed Design
+
+`p-ATA` is a no-std [Pinocchio] program. It avoids heap allocation, uses
+zero-copy instruction/account parsing, and minimizes dependencies. The
+[implementation] (tracked in [associated-token-account#196]) splits into a
+public `interface` crate (instructions, PDA derivation, errors) and the on-chain
+`program` crate. It maintains strict compatibility with the existing ATA
+program:
+
+- Unchanged Program ID: `ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL`
+- Backward compatible instruction interface: discriminants, required accounts,
+  and signer statuses are identical
+- Identical address and bump derivation
+- Same semantics with error codes and state transitions
+
+### New instruction: `CreateWithArgs`
+
+`p-ATA` adds a new instruction that carries optional optimization hints. Each
+hint reserves `0` as its absent value, so it occupies a fixed slot in the wire
+format with no separate presence flag. The serialized payload is exactly seven
+bytes:
+
+| Byte range | Field               | Description                           |
+|------------|---------------------|---------------------------------------|
+| `0`        | discriminator       | `3`                                   |
+| `1`        | mode                | `0` = always create, `1` = idempotent |
+| `2`        | bump hint           | Bump for the ATA address              |
+| `3..7`     | account length hint | unsigned 32-bit little-endian integer |
+
+For bump and account length hint, `0` means absent.
+
+The account list is the same as `Create` / `CreateIdempotent`, with one optional
+trailing rent sysvar:
+
+| Index | Role                  | Description                                |
+|-------|-----------------------|--------------------------------------------|
+| 0     | `[writeable, signer]` | Funding account                            |
+| 1     | `[writeable]`         | Associated token account address to create |
+| 2     | `[]`                  | Wallet address for the ATA                 |
+| 3     | `[]`                  | Token mint                                 |
+| 4     | `[]`                  | System program                             |
+| 5     | `[]`                  | SPL Token or Token-2022 program            |
+| 6     | `[]` optional         | Rent sysvar (NEW)                          |
+
+The rent sysvar is optional and trades off against the caller's expected case.
+Supplying it lets account creation read rent from the sysvar account instead of
+invoking the rent syscall, so the create and prefunded paths are cheaper with
+it. On the idempotent no-op path the account already exists and creation is
+skipped, so a supplied rent sysvar is never read and adds a small per-account
+cost to that dominant existing-ATA case. A caller that expects to create the
+account should include the rent sysvar, while a caller using `CreateWithArgs` as
+a universal idempotent replacement should omit it.
+
+### `RecoverNested`
+
+`RecoverNested` keeps its existing discriminator (`2`), but `p-ATA` extends it
+beyond what the legacy program supports:
+
+- The nested mint may use a different token program than the owner mint
+- The wallet may be a token multisig
+- The nested mint may carry a transfer hook
+
+These additions are backward compatible. The new accounts are optional and
+trailing, so a caller passing the legacy account layout gets identical behavior.
+
+The instruction supports the following account layout:
+
+| Index | Role                  | Description                             |
+|-------|-----------------------|-----------------------------------------|
+| 0     | `[writeable]`         | Nested ATA, owned by the owner ATA      |
+| 1     | `[]`                  | Nested token mint                       |
+| 2     | `[writeable]`         | Wallet's ATA for the nested mint        |
+| 3     | `[]`                  | Owner ATA                               |
+| 4     | `[]`                  | Owner token mint                        |
+| 5     | `[writeable, signer]` | Wallet or token multisig wallet (NEW)   |
+| 5     | `[writeable]`         | Wallet or token multisig wallet (NEW)   |
+| 6     | `[]`                  | Token program for the owner mint        |
+| 7     | `[]` optional         | Token program for the nested mint (NEW) |
+| `8..` | `[signer]` optional   | Multisig signer accounts (NEW)          |
+
+The nested token program account is optional when it is the same as the owner
+token program and the wallet signs directly. It is required when the nested mint
+uses a different token program, and it is also required when the wallet is a
+token multisig so that trailing signer accounts are unambiguous.
+
+### Upgrade path
+
+Since the current mainnet ATA program is a Loader v2 program, the migration will
+follow [SIMD-0418]. A Loader v3 buffer containing the verified `p-ATA` ELF will
+be deployed before activation. When the feature activates, the runtime creates
+the derived program data account, rewrites the existing ATA program account as a
+Loader v3 program account with no upgrade authority, and closes the source
+buffer.
+
+## Dependencies
+
+- **[SIMD-0312]: CreateAccountAllowPrefund** Recently activated on mainnet.
+  Preserves prefunded-ATA support while avoiding the legacy `Transfer` +
+  `Allocate` + `Assign` sequence.
+
+- **[SIMD-0418]: Loader v2 to v3 Program Migrations**. `p-ATA` will re-use the
+  same pattern exercised by `p-token` for the program upgrade.
+
+- **[SIMD-0449]: Direct Account Pointers** Pending mainnet activation. `p-ATA`
+  will save CUs by using the new direct-account-pointer entrypoint.
+
+- **[token-2022-interface#1231]: allocation-free Token-2022 account sizing**.
+  Waiting on release. Adds a no-std, no-allocation helper for sizing token-2022
+  accounts locally instead of a `GetAccountDataSize` CPI.
+
+- **New Pinocchio crate release**. `p-ATA` uses Pinocchio APIs (the
+  `CreateAccountAllowPrefund` builder, token `Batch`, Token-2022
+  `StateWithExtensions` and extension state, `GetAccountDataSize`) that are
+  merged to `main` but not all in current releases.
+
+## Alternatives Considered
+
+An alternative is to extend the existing `Create` and `CreateIdempotent`
+instructions with the optional hints instead of adding `CreateWithArgs`. We
+rejected this. At p-token's launch, some callers turned out to be passing extra
+accounts that the legacy program silently ignored, and the stricter p-token
+rejected them, which broke those callers. Overloading `Create` and
+`CreateIdempotent` to read a trailing rent sysvar or extra hint bytes would
+reinterpret data those callers already send and risk the same breakage.
+
+## Security Considerations
+
+- **Comprehensive Testing**: All existing test fixtures will be ported and
+  passed. A differential testing framework will execute instructions against
+  both program versions and assert that the resulting state and status are
+  identical.
+- **Fuzzing**: The program will be heavily fuzzed by replaying historical
+  mainnet transactions. Working with Firedancer to source fixtures.
+- **External Security Audit**: The final implementation will undergo at least
+  one comprehensive external security audit.
+- **Formal Verification**: Employ formal methods to prove that p-ATA
+  demonstrates semantic equivalence with the legacy implementation.
+
+[SIMD-0266]: ./0266-efficient-token-program.md
+
+[SIMD-0312]: ./0312-create-account-allow-prefund.md
+
+[SIMD-0418]: ./0418-enable-loader-v2-to-v3-program-migrations.md
+
+[SIMD-0449]: ./0449-direct-account-pointers-in-program-input.md
+
+[Pinocchio]: https://github.com/anza-xyz/pinocchio
+
+[implementation]: https://github.com/solana-program/associated-token-account/tree/main/pinocchio
+
+[associated-token-account#196]: https://github.com/solana-program/associated-token-account/issues/196
+
+[token-2022-interface#1231]: https://github.com/solana-program/token-2022/pull/1231
