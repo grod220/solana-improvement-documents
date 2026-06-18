@@ -152,18 +152,19 @@ trailing, so a caller passing the legacy account layout gets identical behavior.
 
 The instruction supports the following account layout:
 
-| Index | Role                  | Description                             |
-|-------|-----------------------|-----------------------------------------|
-| 0     | `[writeable]`         | Nested ATA, owned by the owner ATA      |
-| 1     | `[]`                  | Nested token mint                       |
-| 2     | `[writeable]`         | Wallet's ATA for the nested mint        |
-| 3     | `[]`                  | Owner ATA                               |
-| 4     | `[]`                  | Owner token mint                        |
-| 5     | `[writeable, signer]` | Wallet or token multisig wallet (NEW)   |
-| 5     | `[writeable]`         | Wallet or token multisig wallet (NEW)   |
-| 6     | `[]`                  | Token program for the owner mint        |
-| 7     | `[]` optional         | Token program for the nested mint (NEW) |
-| `8..` | `[signer]` optional   | Multisig signer accounts (NEW)          |
+<!-- markdownlint-disable MD013 -->
+| Index | Role                                    | Description                             |
+|-------|-----------------------------------------|-----------------------------------------|
+| 0     | `[writeable]`                           | Nested ATA, owned by the owner ATA      |
+| 1     | `[]`                                    | Nested token mint                       |
+| 2     | `[writeable]`                           | Wallet's ATA for the nested mint        |
+| 3     | `[]`                                    | Owner ATA                               |
+| 4     | `[]`                                    | Owner token mint                        |
+| 5     | `[writeable, signer (if not multisig)]` | Wallet or token multisig wallet (NEW)   |
+| 6     | `[]`                                    | Token program for the owner mint        |
+| 7     | `[]` optional                           | Token program for the nested mint (NEW) |
+| `8..` | `[signer]` optional                     | Multisig signer accounts (NEW)          |
+<!-- markdownlint-restore -->
 
 The nested token program account is optional when it is the same as the owner
 token program and the wallet signs directly. It is required when the nested mint
