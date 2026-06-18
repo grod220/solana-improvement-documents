@@ -191,15 +191,6 @@ buffer.
 - **[SIMD-0449]: Direct Account Pointers** Pending mainnet activation. `p-ATA`
   will save CUs by using the new direct-account-pointer entrypoint.
 
-- **[token-2022-interface#1231]: allocation-free Token-2022 account sizing**.
-  Waiting on release. Adds a no-std, no-allocation helper for sizing token-2022
-  accounts locally instead of a `GetAccountDataSize` CPI.
-
-- **New Pinocchio crate release**. `p-ATA` uses Pinocchio APIs (the
-  `CreateAccountAllowPrefund` builder, token `Batch`, Token-2022
-  `StateWithExtensions` and extension state, `GetAccountDataSize`) that are
-  merged to `main` but not all in current releases.
-
 ## Alternatives Considered
 
 An alternative is to extend the existing `Create` and `CreateIdempotent`
@@ -224,17 +215,8 @@ reinterpret data those callers already send and risk the same breakage.
   demonstrates semantic equivalence with the legacy implementation.
 
 [SIMD-0266]: ./0266-efficient-token-program.md
-
-[SIMD-0312]: ./0312-create-account-allow-prefund.md
-
 [SIMD-0418]: ./0418-enable-loader-v2-to-v3-program-migrations.md
-
 [SIMD-0449]: ./0449-direct-account-pointers-in-program-input.md
-
 [Pinocchio]: https://github.com/anza-xyz/pinocchio
-
 [implementation]: https://github.com/solana-program/associated-token-account/tree/main/pinocchio
-
 [associated-token-account#196]: https://github.com/solana-program/associated-token-account/issues/196
-
-[token-2022-interface#1231]: https://github.com/solana-program/token-2022/pull/1231
