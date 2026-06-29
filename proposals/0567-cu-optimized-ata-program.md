@@ -49,37 +49,36 @@ results can be had with the ATA program.
 ## Impact
 
 The average CU reduction (weighted by instruction frequency) of `p-ATA`
-instructions is 80.9% against the legacy ATA program baseline. Given ATA's share
+instructions is 81% against the legacy ATA program baseline. Given ATA's share
 of total CU usage, we can expect a cluster-wide CU reduction of ~10-11%.
 
 | Case                    | Share of use | Legacy | p-ATA | Reduction |
 |-------------------------|-------------:|-------:|------:|----------:|
 | idempotent new SPL      |       39.86% | 22,940 | 4,171 |    -81.8% |
-| idempotent existing SPL |       30.32% |  3,710 |   548 |    -85.2% |
-| idempotent existing T22 |       18.60% |  8,210 | 1,634 |    -80.1% |
-| create SPL              |        5.65% | 18,433 | 3,083 |    -83.3% |
+| idempotent existing SPL |       30.32% |  3,710 |   530 |    -85.7% |
+| idempotent existing T22 |       18.60% |  8,210 | 1,616 |    -80.3% |
+| create SPL              |        5.65% | 18,433 | 3,085 |    -83.3% |
 | idempotent new T22      |        3.65% | 15,474 | 5,496 |    -64.5% |
 | create T22              |        1.91% | 13,967 | 5,132 |    -63.3% |
-| recover_nested SPL/SPL  |        0.00% | 26,806 | 5,196 |    -80.6% |
+| recover_nested SPL/SPL  |        0.00% | 26,806 | 5,152 |    -80.8% |
 
-`CreateWithArgs` is a new proposed instruction where callers can cheaply provide
-the bump, account length, and rent sysvar. Ordered by observed use where
-available, it saves the following on creation and idempotent paths:
+`CreateWithArgs` is a new proposed instruction where callers can optionally
+provide the bump, account length, and rent sysvar. The full-hint CU
+measurements are:
 
-| Case                    |  Base | WithArgs | Delta |
-|-------------------------|------:|---------:|------:|
-| idempotent new SPL      | 4,171 |    3,984 |  -187 |
-| idempotent existing SPL |   548 |      606 |   +58 |
-| idempotent existing T22 | 1,634 |    1,695 |   +61 |
-| create SPL              | 3,083 |    2,891 |  -192 |
-| idempotent new T22      | 5,496 |    5,303 |  -193 |
-| create T22              | 5,132 |    4,934 |  -198 |
-| create prefunded SPL    | 3,083 |    2,891 |  -192 |
-| create prefunded T22    | 5,132 |    4,934 |  -198 |
-| create T22 known mint   | 6,164 |    5,750 |  -414 |
+| Case                     |  Base | WithArgs |  Delta |
+|--------------------------|------:|---------:|-------:|
+| idempotent new SPL       | 4,171 |    3,925 |   -246 |
+| idempotent existing SPL  |   530 |      387 |   -143 |
+| idempotent existing T22  | 1,616 |      387 | -1,229 |
+| create SPL               | 3,085 |    2,831 |   -254 |
+| idempotent new T22       | 5,496 |    5,684 |   +188 |
+| create T22               | 5,132 |    5,314 |   +182 |
+| create prefunded SPL     | 3,085 |    2,831 |   -254 |
+| create prefunded T22     | 5,132 |    5,314 |   +182 |
+| create T22 extended mint | 6,674 |    6,130 |   -544 |
 
-Note: idempotent paths still being optimized (at the moment, CUs higher against
-baseline).
+More details on caller guidance and tradeoffs for this instruction below.
 
 ## New Terminology
 
@@ -129,14 +128,37 @@ trailing rent sysvar:
 | 5     | `[]`                  | SPL Token or Token-2022 program            |
 | 6     | `[]` optional         | Rent sysvar (NEW)                          |
 
-The rent sysvar is optional and trades off against the caller's expected case.
-Supplying it lets account creation read rent from the sysvar account instead of
-invoking the rent syscall, so the create and prefunded paths are cheaper with
-it. On the idempotent no-op path the account already exists and creation is
-skipped, so a supplied rent sysvar is never read and adds a small per-account
-cost to that dominant existing-ATA case. A caller that expects to create the
-account should include the rent sysvar, while a caller using `CreateWithArgs` as
-a universal idempotent replacement should omit it.
+#### Caller guidance
+
+All optimization params (bump, account length, & rent sysvar account) are optional
+with trade offs depending on the caller's expected case.
+
+<!-- markdownlint-disable MD013 -->
+| Case                     | No hints | Bump only | Len only | Rent only | Full hints |
+|--------------------------|---------:|----------:|---------:|----------:|-----------:|
+| create SPL               |      +14 |      -129 |      +15 |      -113 |       -254 |
+| create T22               |      +13 |      -130 |       +9 |      +328 |       +182 |
+| create T22 extended mint |      +14 |      -129 |     -717 |      +329 |       -544 |
+| idempotent new SPL       |      +19 |      -121 |      +20 |      -108 |       -246 |
+| idempotent new T22       |      +16 |      -124 |      +12 |      +331 |       +188 |
+| idempotent existing SPL  |      +21 |      -153 |      +22 |       +30 |       -143 |
+| idempotent existing T22  |      +21 |    -1,239 |      +22 |       +30 |     -1,229 |
+<!-- markdownlint-restore -->
+
+- If the caller provides no optimization params, use `Create`/`CreateIdempotent` instead.
+- If the call is idempotent and the ATA is likely to already exist:
+  - If the caller knows the correct bump, use `CreateWithArgs` with the bump.
+  - Otherwise use `CreateIdempotent`.
+- If the token program is SPL Token:
+  - Ignore `account_len`, because SPL Token account length is fixed.
+  - Include the correct bump when available.
+  - Include the rent sysvar when account creation is likely.
+  - Omit the rent sysvar when optimizing for mostly-existing idempotent calls.
+- If the token program is Token-2022:
+  - Include the correct bump & `account_len` when known.
+  - Omit the rent sysvar for creation paths until the Token-2022 program has zero copy
+    account parsing. After this, it will be beneficial (-390 CUs). At the moment, it's
+    a penalty.
 
 ### `RecoverNested`
 
