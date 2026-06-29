@@ -194,7 +194,7 @@ token program and the wallet signs directly. It is required when the nested mint
 uses a different token program, and it is also required when the wallet is a
 token multisig so that trailing signer accounts are unambiguous.
 
-### Upgrade path
+### Program migration
 
 Since the current mainnet ATA program is a Loader v2 program, the migration will
 follow [SIMD-0418]. A Loader v3 buffer containing the verified `p-ATA` ELF will
@@ -203,14 +203,21 @@ the derived program data account, rewrites the existing ATA program account as a
 Loader v3 program account with no upgrade authority, and closes the source
 buffer.
 
+#### Reproducible build artifact
+
 The migration configuration must specify the source Loader v3 buffer account and
-expected verified build hash. It can be reproduced from:
+expected verified build hash. The `p-ATA` ELF can be reproduced from the pinned
+implementation commit:
 
 ```sh
 git clone https://github.com/solana-program/associated-token-account.git
 cd associated-token-account
 git checkout daba656acc2949d3bf7903c69bd3357192d0dfe0
 make build-sbf-pinocchio-program
+
+# The generated ELF is located at:
+# target/deploy/pinocchio_associated_token_account_program.so
+
 solana-verify get-executable-hash \
   target/deploy/pinocchio_associated_token_account_program.so
 ```
