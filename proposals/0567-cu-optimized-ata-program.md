@@ -145,7 +145,8 @@ with trade offs depending on the caller's expected case.
 | idempotent existing T22  |      +21 |    -1,239 |      +22 |       +30 |     -1,229 |
 <!-- markdownlint-restore -->
 
-- If the caller provides no optimization params, use `Create`/`CreateIdempotent` instead.
+- If the caller provides no optimization params, use `Create`/`CreateIdempotent`
+  instead.
 - If the call is idempotent and the ATA is likely to already exist:
   - If the caller knows the correct bump, use `CreateWithArgs` with the bump.
   - Otherwise use `CreateIdempotent`.
@@ -156,9 +157,9 @@ with trade offs depending on the caller's expected case.
   - Omit the rent sysvar when optimizing for mostly-existing idempotent calls.
 - If the token program is Token-2022:
   - Include the correct bump & `account_len` when known.
-  - Omit the rent sysvar for creation paths until the Token-2022 program has zero copy
-    account parsing. After this, it will be beneficial (-390 CUs). At the moment, it's
-    a penalty.
+  - Omit the rent sysvar for creation paths until the Token-2022 program has
+    zero copy account parsing. After this, it will be beneficial (-390 CUs). At
+    the moment, it's a penalty.
 
 ### `RecoverNested`
 
@@ -201,6 +202,24 @@ be deployed before activation. When the feature activates, the runtime creates
 the derived program data account, rewrites the existing ATA program account as a
 Loader v3 program account with no upgrade authority, and closes the source
 buffer.
+
+The migration configuration must specify the source Loader v3 buffer account and
+expected verified build hash. It can be reproduced from:
+
+```sh
+git clone https://github.com/solana-program/associated-token-account.git
+cd associated-token-account
+git checkout daba656acc2949d3bf7903c69bd3357192d0dfe0
+make build-sbf-pinocchio-program
+solana-verify get-executable-hash \
+  target/deploy/pinocchio_associated_token_account_program.so
+```
+
+The expected verified build hash is:
+
+```text
+c667326d5d7afbe7e9996e6d05259ce6fca36b310b5cdf7eb6380f2f1d953d4f
+```
 
 ## Dependencies
 
