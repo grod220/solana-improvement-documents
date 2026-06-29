@@ -31,9 +31,9 @@ high-leverage target for compute reduction.
 
 On a 30k confirmed-block stratified mainnet sample:
 
-- ATA appears in 11.85% of transactions
+- ATA appears in 11.85% of transactions (31.3% non-vote only)
 - ATA share of total CU usage: 13.28%
-- Top invoked programs (ranked):
+- Top invoked programs, ranked by instruction count:
     1. spl token (p-token already live),
     2. compute budget (Transaction V1 makes this ix unnecessary)
     3. vote (removed in Alpenglow)
