@@ -221,6 +221,12 @@ The expected verified build hash is:
 c667326d5d7afbe7e9996e6d05259ce6fca36b310b5cdf7eb6380f2f1d953d4f
 ```
 
+#### Program availability
+
+During the migration slot in which feature activation is applied, the ATA program
+will not be invocable. Loader v3 programs become effective one slot after the
+deployment slot.
+
 ## Dependencies
 
 - **[SIMD-0312]: CreateAccountAllowPrefund** Recently activated on mainnet.
